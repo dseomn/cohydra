@@ -13,31 +13,34 @@ class Profile(six.with_metaclass(abc.ABCMeta)):
   """Base class for all collection profiles.
 
   Attributes:
-    top_dir: Where this profile's files will be stored.
-    parent: The profile from which this profile is derived, or
+    _top_dir: Where this profile's files will be stored. In general,
+        this should not be used by subclasses. Instead, use dst_path
+        and src_path to avoid accidentally writing to the parent's
+        _top_dir.
+    _parent: The profile from which this profile is derived, or
         None for a root profile.
-    children: List of child profiles.
+    _children: List of child profiles.
   """
 
   def __init__(self, top_dir, parent):
     """Create a profile.
     """
 
-    self.top_dir = top_dir
+    self._top_dir = top_dir
 
-    self.parent = parent
+    self._parent = parent
 
-    self.children = []
+    self._children = []
 
-    if self.parent is not None:
-      self.parent.children.append(self)
+    if self._parent is not None:
+      self._parent._children.append(self)
 
   def __str__(self):
     return '%s.%s(top_dir=%r, parent=%r)' % (
       self.__class__.__module__,
       self.__class__.__name__,
-      self.top_dir,
-      None if self.parent is None else self.parent.top_dir,
+      self._top_dir,
+      None if self._parent is None else self._parent._top_dir,
       )
 
   def generate_all(self, depth=0):
@@ -48,7 +51,7 @@ class Profile(six.with_metaclass(abc.ABCMeta)):
     self.generate()
 
     # TODO: parallelize?
-    for child in self.children:
+    for child in self._children:
       child.generate_all(depth + 1)
 
   def print_all(self, depth=0):
@@ -57,7 +60,7 @@ class Profile(six.with_metaclass(abc.ABCMeta)):
 
     print('  ' * depth + str(self))
 
-    for child in self.children:
+    for child in self._children:
       child.print_all(depth + 1)
 
   def log(self, level, msg, *args, **kwargs):
@@ -69,6 +72,43 @@ class Profile(six.with_metaclass(abc.ABCMeta)):
       '%s: %s' % (self, msg),
       *args,
       **kwargs)
+
+  def src_path(self, relpath=''):
+    """Given a relative path, return the absolute path for reading.
+
+    This (very trivial) function is intended to make it obvious to a
+    programmer when a filename is intended to be used for reading, to
+    avoid accidental reads from self._top_dir.
+
+    Args:
+        relpath: Path, relative to self._parent._top_dir.
+
+    Returns:
+        An absolute path under self._parent._top_dir.
+    """
+
+    if self._parent is None:
+      raise RuntimeError('Cannot read for %s' % self)
+
+    return os.path.abspath(
+      os.path.join(self._parent._top_dir, relpath))
+
+  def dst_path(self, relpath=''):
+    """Given a relative path, return the absolute path for writing.
+
+    This (very trivial) function is intended to make it obvious to a
+    programmer when a filename is intended to be used for writing, to
+    avoid accidental writes to self._parent._top_dir, which could
+    cause loss of important files.
+
+    Args:
+        relpath: Path, relative to self._top_dir.
+
+    Returns:
+        An absolute path under self._top_dir.
+    """
+
+    return os.path.abspath(os.path.join(self._top_dir, relpath))
 
   @abc.abstractmethod
   def generate(self):
@@ -109,12 +149,12 @@ class FilterProfile(Profile):
     Args:
         select_cb: Callback to select which files/directories in a
             directory get symlinked and which are ignored. Its
-            arguments are (dir, contents). dir is a path relative to
-            self.top_dir and self.parent.top_dir. contents is a list
-            of os.DirEntry objects. The callback must return a list of
-            files to keep, from contents. Directories in the keep-list
-            are recursed into; anything else is symlinked. Anything
-            not in the keep-list is ignored.
+            arguments are (dir, contents). dir is a relative (source
+            or destination) path. contents is a list of os.DirEntry
+            objects. The callback must return a list of files to keep,
+            from contents. Directories in the keep-list are recursed
+            into; anything else is symlinked. Anything not in the
+            keep-list is ignored.
     """
 
     super(FilterProfile, self).__init__(**kwargs)
@@ -136,20 +176,24 @@ class FilterProfile(Profile):
     This does not delete relpath itself, just its contents.
     """
 
-    path = os.path.join(self.top_dir, relpath)
-    for entry in os.scandir(path):
-      if entry.is_symlink():
-        self.log(logging.DEBUG, 'Deleting symlink %r', entry.path)
-        os.remove(entry.path)
-      elif entry.is_dir():
-        self.clean(os.path.join(relpath, entry.name))
-        self.log(logging.DEBUG, 'Deleting directory %r', entry.path)
-        os.rmdir(entry.path)
+    dst_path = self.dst_path(relpath)
+    for dst_entry in os.scandir(dst_path):
+      if dst_entry.is_symlink():
+        self.log(logging.DEBUG, 'Deleting symlink %r', dst_entry.path)
+        os.remove(dst_entry.path)
+      elif dst_entry.is_dir():
+        self.clean(os.path.join(relpath, dst_entry.name))
+        self.log(
+          logging.DEBUG,
+          'Deleting directory %r',
+          dst_entry.path,
+          )
+        os.rmdir(dst_entry.path)
       else:
         self.log(
           logging.ERROR,
           'Found non-symlink non-directory %r',
-          entry.path,
+          dst_entry.path,
           )
         raise RuntimeError('Cannot clean %r' % relpath)
 
@@ -161,22 +205,22 @@ class FilterProfile(Profile):
     do nothing.
     """
 
-    parent_path = os.path.join(self.parent.top_dir, relpath)
-    path = os.path.join(self.top_dir, relpath)
+    src_path = self.src_path(relpath)
+    dst_path = self.dst_path(relpath)
 
-    keep = self.select_cb(relpath, list(os.scandir(parent_path)))
+    src_keep = self.select_cb(relpath, list(os.scandir(src_path)))
 
-    for entry in keep:
-      entry_relpath = os.path.join(relpath, entry.name)
+    for src_entry in src_keep:
+      entry_relpath = os.path.join(relpath, src_entry.name)
 
-      if entry.is_dir():
+      if src_entry.is_dir():
         self.filter_dir(entry_relpath)
       else:
-        os.makedirs(path, exist_ok=True)
+        os.makedirs(dst_path, exist_ok=True)
         self.log(logging.DEBUG, 'Linking %r', entry_relpath)
         os.symlink(
-          os.path.relpath(os.path.abspath(entry.path), path),
-          os.path.join(path, entry.name),
+          os.path.relpath(os.path.abspath(src_entry.path), dst_path),
+          os.path.join(dst_path, src_entry.name),
           )
 
 
@@ -198,15 +242,14 @@ class ConvertProfile(Profile):
     """
     Args:
         select_cb: Callback to select which files to convert. Its
-            argument is a single filename relative to
-            self.parent.top_dir. If the file should be converted, it
-            returns a filename relative to self.top_dir of where the
-            converted file should be placed. Otherwise, it returns
-            None, and the file is symlinked with the same relative
-            filename.
+            argument is a single relative source filename. If the file
+            should be converted, it returns a relative destination
+            filename of where the converted file should be placed.
+            Otherwise, it returns None, and the file is symlinked with
+            the same relative filename.
         convert_cb: Callback to convert a file. Its arguments (in
-            order) are the original filename and the target filename.
-            This callback must be thread-safe.
+            order) are the source filename and the destination
+            filename. This callback must be thread-safe.
     """
 
     super(ConvertProfile, self).__init__(**kwargs)
@@ -216,41 +259,41 @@ class ConvertProfile(Profile):
     self.convert_cb = convert_cb
 
   def generate(self):
-    keep = self.convert()
+    dst_keep = self.convert()
 
-    self.clean(keep)
+    self.clean(dst_keep)
 
   def convert(self):
     """Convert or symlink files.
 
     Returns:
-        A set of paths relative to self.top_dir of all converted or
+        A set of relative destination paths of all converted or
         symlinked files, and all directories.
     """
 
-    keep = set()
+    dst_keep = set()
 
-    for old_relpath, new_relpath, convert \
+    for src_relpath, dst_relpath, convert \
         in self.select_and_symlink():
-      keep.add(new_relpath)
+      dst_keep.add(dst_relpath)
 
       if not convert:
         continue
 
-      old_path = os.path.join(self.parent.top_dir, old_relpath)
-      new_path = os.path.join(self.top_dir, new_relpath)
+      src_path = self.src_path(src_relpath)
+      dst_path = self.dst_path(dst_relpath)
 
       # TODO: paralellize?
       self.log(
         logging.DEBUG,
         'Converting %r to %r',
-        old_relpath,
-        new_relpath,
+        src_relpath,
+        dst_relpath,
         )
-      self.convert_cb(old_path, new_path)
-      shutil.copystat(old_path, new_path)
+      self.convert_cb(src_path, dst_path)
+      shutil.copystat(src_path, dst_path)
 
-    return keep
+    return dst_keep
 
   def select_and_symlink(self):
     """Select which files to convert, and handle symlinks.
@@ -260,95 +303,96 @@ class ConvertProfile(Profile):
     symlinks for files that are not to be converted.
 
     Returns:
-        A generator of tuples. The first item in a tuple is the path
-        relative to self.parent.top_dir of each file or directory. The
-        second item is the target path relative to self.top_dir. The
-        third is True if conversion is needed, False otherwise.
+        A generator of tuples. The first item in a tuple is the
+        relative source path of each file or directory. The second
+        item is the relative destination path. The third is True if
+        conversion is needed, False otherwise.
     """
 
-    for relpath, entry \
+    for src_relpath, src_entry \
         in util.recursive_scandir(
-          self.parent.top_dir,
+          self.src_path(),
           dir_first=True,
           ):
-      if entry.is_dir():
-        os.makedirs(entry.path, exist_ok=True)
-        yield relpath, relpath, False
+      if src_entry.is_dir():
+        os.makedirs(src_entry.path, exist_ok=True)
+        yield src_relpath, src_relpath, False
         continue
 
-      convert_relpath = self.select_cb(relpath)
+      dst_relpath = self.select_cb(src_relpath)
 
-      if convert_relpath is None:
+      if dst_relpath is None:
         # Remove anything already in this profile, and replace it with
         # a symlink.
 
-        symlink_path = os.path.join(self.top_dir, relpath)
-        symlink_dirpath = os.path.dirname(symlink_path)
+        dst_relpath = src_relpath
+        dst_path = self.dst_path(dst_relpath)
+        dst_dirpath = os.path.dirname(dst_path)
 
-        if os.path.isdir(symlink_path) \
-            and not os.path.islink(symlink_path):
-          self.log(logging.DEBUG, 'Removing %r', relpath)
-          shutil.rmtree(symlink_path)
-        elif os.path.lexists(symlink_path):
-          self.log(logging.DEBUG, 'Removing %r', relpath)
-          os.remove(symlink_path)
+        if os.path.isdir(dst_path) \
+            and not os.path.islink(dst_path):
+          self.log(logging.DEBUG, 'Removing %r', dst_relpath)
+          shutil.rmtree(dst_path)
+        elif os.path.lexists(dst_path):
+          self.log(logging.DEBUG, 'Removing %r', dst_relpath)
+          os.remove(dst_path)
 
-        self.log(logging.DEBUG, 'Linking %r', relpath)
+        self.log(logging.DEBUG, 'Linking %r', dst_relpath)
         os.symlink(
           os.path.relpath(
-            os.path.abspath(entry.path),
-            symlink_dirpath),
-          symlink_path,
+            os.path.abspath(src_entry.path),
+            dst_dirpath),
+          dst_path,
           )
 
-        yield relpath, relpath, False
+        yield src_relpath, dst_relpath, False
 
       else:
         # Test whether the converted file is up to date, and get rid
         # of it if not.
 
-        convert_path = os.path.join(self.top_dir, convert_relpath)
+        dst_path = self.dst_path(dst_relpath)
 
-        if not os.path.lexists(convert_path):
-          yield relpath, convert_relpath, True
+        if not os.path.lexists(dst_path):
+          yield src_relpath, dst_relpath, True
           continue
 
-        orig_stat = os.stat(entry.path)
-        orig_mtime = (orig_stat.st_mtime, orig_stat.st_mtime_ns)
-        convert_stat = os.lstat(convert_path)
-        convert_mtime = (convert_stat.st_mtime, convert_stat.st_mtime_ns)
+        src_stat = os.stat(src_entry.path)
+        src_mtime = (src_stat.st_mtime, src_stat.st_mtime_ns)
+        dst_stat = os.lstat(dst_path)
+        dst_mtime = (dst_stat.st_mtime, dst_stat.st_mtime_ns)
 
-        if stat.S_ISDIR(convert_stat.st_mode):
-          self.log(logging.DEBUG, 'Removing %r', convert_relpath)
-          shutil.rmtree(convert_path)
-          yield relpath, convert_relpath, True
-        elif stat.S_ISREG(convert_stat.st_mode) \
-            and orig_mtime == convert_mtime:
-          self.log(logging.DEBUG, 'Up-to-date %r', convert_relpath)
-          yield relpath, convert_relpath, False
+        if stat.S_ISDIR(dst_stat.st_mode):
+          self.log(logging.DEBUG, 'Removing %r', dst_relpath)
+          shutil.rmtree(dst_path)
+          yield src_relpath, dst_relpath, True
+        elif stat.S_ISREG(dst_stat.st_mode) \
+            and src_mtime == dst_mtime:
+          self.log(logging.DEBUG, 'Up-to-date %r', dst_relpath)
+          yield src_relpath, dst_relpath, False
         else:
-          self.log(logging.DEBUG, 'Removing %r', convert_relpath)
-          os.remove(convert_path)
-          yield relpath, convert_relpath, True
+          self.log(logging.DEBUG, 'Removing %r', dst_relpath)
+          os.remove(dst_path)
+          yield src_relpath, dst_relpath, True
 
-  def clean(self, keep):
-    """Clean self.top_dir.
+  def clean(self, dst_keep):
+    """Clean the destination directory.
 
-    Delete everything in self.top_dir, except for the specified files.
+    Delete everything in dst_path(), except for the specified files.
 
     Args:
-        keep: A set of paths relative to self.top_dir that should not
+        dst_keep: A set of relative destination paths that should not
             be deleted.
     """
 
-    for relpath, entry \
-        in util.recursive_scandir(self.top_dir, dir_first=False):
-      entry_relpath = os.path.join(relpath, entry.name)
+    for dst_relpath, dst_entry \
+        in util.recursive_scandir(self.dst_path(), dir_first=False):
+      dst_entry_relpath = os.path.join(dst_relpath, dst_entry.name)
 
-      if entry_relpath not in keep:
-        self.log(logging.DEBUG, 'Removing %r', entry.path)
-        if os.path.isdir(entry.path) \
-            and not os.path.islink(entry.path):
-          os.rmdir(entry.path)
+      if dst_entry_relpath not in dst_keep:
+        self.log(logging.DEBUG, 'Removing %r', dst_entry.path)
+        if os.path.isdir(dst_entry.path) \
+            and not os.path.islink(dst_entry.path):
+          os.rmdir(dst_entry.path)
         else:
-          os.remove(entry.path)
+          os.remove(dst_entry.path)
