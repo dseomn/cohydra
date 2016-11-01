@@ -1,5 +1,6 @@
 import abc
 import logging
+import multiprocessing
 import os
 import shutil
 import stat
@@ -254,7 +255,8 @@ class ConvertProfile(Profile):
             filename.
         convert_cb: Callback to convert a file. Its arguments (in
             order) are the profile, the source filename, and the
-            destination filename. This callback must be thread-safe.
+            destination filename. This callback must be
+            multi-threading and multi-processing safe.
     """
 
     super(ConvertProfile, self).__init__(**kwargs)
@@ -278,27 +280,45 @@ class ConvertProfile(Profile):
 
     dst_keep = set()
 
-    for src_relpath, dst_relpath, convert \
-        in self.select_and_symlink():
-      dst_keep.add(dst_relpath)
+    with multiprocessing.Pool() as pool:
+      results = []
 
-      if not convert:
-        continue
+      for src_relpath, dst_relpath, convert \
+          in self.select_and_symlink():
+        dst_keep.add(dst_relpath)
 
-      src_path = self.src_path(src_relpath)
-      dst_path = self.dst_path(dst_relpath)
+        if not convert:
+          continue
 
-      # TODO: paralellize?
-      self.log(
-        logging.DEBUG,
-        'Converting %r to %r',
-        src_relpath,
-        dst_relpath,
-        )
-      self.convert_cb(self, src_path, dst_path)
-      shutil.copystat(src_path, dst_path)
+        results.append(
+          pool.apply_async(
+            self.convert_one,
+            (src_relpath, dst_relpath),
+            )
+          )
+
+      for result in results:
+        result.get()
 
     return dst_keep
+
+  def convert_one(self, src_relpath, dst_relpath):
+    """Convert a single file.
+
+    This function must be multi-threading and multi-processing safe.
+    """
+
+    src_path = self.src_path(src_relpath)
+    dst_path = self.dst_path(dst_relpath)
+
+    self.log(
+      logging.DEBUG,
+      'Converting %r to %r',
+      src_relpath,
+      dst_relpath,
+      )
+    self.convert_cb(self, src_path, dst_path)
+    shutil.copystat(src_path, dst_path)
 
   def select_and_symlink(self):
     """Select which files to convert, and handle symlinks.
