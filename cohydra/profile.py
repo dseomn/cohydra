@@ -149,12 +149,12 @@ class FilterProfile(Profile):
     Args:
         select_cb: Callback to select which files/directories in a
             directory get symlinked and which are ignored. Its
-            arguments are (dir, contents). dir is a relative (source
-            or destination) path. contents is a list of os.DirEntry
-            objects. The callback must return a list of files to keep,
-            from contents. Directories in the keep-list are recursed
-            into; anything else is symlinked. Anything not in the
-            keep-list is ignored.
+            arguments are (profile, dir, contents). dir is a relative
+            (source or destination) path. contents is a list of
+            os.DirEntry objects. The callback must return a list of
+            files to keep, from contents. Directories in the keep-list
+            are recursed into; anything else is symlinked. Anything
+            not in the keep-list is ignored.
     """
 
     super(FilterProfile, self).__init__(**kwargs)
@@ -208,7 +208,11 @@ class FilterProfile(Profile):
     src_path = self.src_path(relpath)
     dst_path = self.dst_path(relpath)
 
-    src_keep = self.select_cb(relpath, list(os.scandir(src_path)))
+    src_keep = self.select_cb(
+      self,
+      relpath,
+      list(os.scandir(src_path)),
+      )
 
     for src_entry in src_keep:
       entry_relpath = os.path.join(relpath, src_entry.name)
@@ -242,14 +246,15 @@ class ConvertProfile(Profile):
     """
     Args:
         select_cb: Callback to select which files to convert. Its
-            argument is a single relative source filename. If the file
-            should be converted, it returns a relative destination
-            filename of where the converted file should be placed.
-            Otherwise, it returns None, and the file is symlinked with
-            the same relative filename.
+            arguments (in order) are the profile, and a single
+            relative source filename. If the file should be converted,
+            it returns a relative destination filename of where the
+            converted file should be placed.  Otherwise, it returns
+            None, and the file is symlinked with the same relative
+            filename.
         convert_cb: Callback to convert a file. Its arguments (in
-            order) are the source filename and the destination
-            filename. This callback must be thread-safe.
+            order) are the profile, the source filename, and the
+            destination filename. This callback must be thread-safe.
     """
 
     super(ConvertProfile, self).__init__(**kwargs)
@@ -290,7 +295,7 @@ class ConvertProfile(Profile):
         src_relpath,
         dst_relpath,
         )
-      self.convert_cb(src_path, dst_path)
+      self.convert_cb(self, src_path, dst_path)
       shutil.copystat(src_path, dst_path)
 
     return dst_keep
@@ -319,7 +324,7 @@ class ConvertProfile(Profile):
         yield src_relpath, src_relpath, False
         continue
 
-      dst_relpath = self.select_cb(src_relpath)
+      dst_relpath = self.select_cb(self, src_relpath)
 
       if dst_relpath is None:
         # Remove anything already in this profile, and replace it with
