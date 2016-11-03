@@ -340,8 +340,10 @@ class ConvertProfile(Profile):
           dir_first=True,
           ):
       if src_entry.is_dir():
-        os.makedirs(src_entry.path, exist_ok=True)
-        yield src_relpath, src_relpath, False
+        dst_relpath = src_relpath
+        self.log(logging.DEBUG, 'Creating directory %r', dst_relpath)
+        os.makedirs(self.dst_path(dst_relpath), exist_ok=True)
+        yield src_relpath, dst_relpath, False
         continue
 
       dst_relpath = self.select_cb(self, src_relpath)
