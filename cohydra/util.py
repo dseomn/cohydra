@@ -11,9 +11,9 @@ def recursive_scandir(top_dir, dir_first=True):
           directory itself.
 
   Returns:
-      A generator of tuples of the path of a directory relative to
-      the top path, and an os.DirEntry object of an entry in that
-      directory. The top_dir itself is not included.
+      A generator of tuples of a path relative to the top path, and an
+      os.DirEntry object of the file or directory at that path. The
+      top_dir itself is not included.
   """
 
   def f(relpath, dir_entry):

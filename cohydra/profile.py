@@ -414,9 +414,7 @@ class ConvertProfile(Profile):
 
     for dst_relpath, dst_entry \
         in util.recursive_scandir(self.dst_path(), dir_first=False):
-      dst_entry_relpath = os.path.join(dst_relpath, dst_entry.name)
-
-      if dst_entry_relpath not in dst_keep:
+      if dst_relpath not in dst_keep:
         self.log(logging.DEBUG, 'Removing %r', dst_entry.path)
         if os.path.isdir(dst_entry.path) \
             and not os.path.islink(dst_entry.path):
