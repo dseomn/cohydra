@@ -356,8 +356,18 @@ class ConvertProfile(Profile):
           ):
       if src_entry.is_dir():
         dst_relpath = src_relpath
+        dst_path = self.dst_path(dst_relpath)
+
+        # Get rid of any non-directory where this directory should be.
+        if os.path.lexists(dst_path):
+          if not os.path.isdir(dst_path) or os.path.islink(dst_path):
+            self.log(logging.DEBUG, 'Removing %r', dst_relpath)
+            os.remove(dst_path)
+
+        # Create the directory if needed.
         self.log(logging.DEBUG, 'Creating directory %r', dst_relpath)
-        os.makedirs(self.dst_path(dst_relpath), exist_ok=True)
+        os.makedirs(dst_path, exist_ok=True)
+
         yield src_relpath, dst_relpath, False
         continue
 
