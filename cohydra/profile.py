@@ -235,7 +235,8 @@ class ConvertProfile(Profile):
   Each directory is created. Each regular file (or symlink to a
   regular file) is either symlinked, or converted to another format.
   During conversion a new filename may be used (e.g., 'foo.flac.ogg'
-  instead of 'foo.flac').
+  instead of 'foo.flac'), however no two source files may map (via
+  symlinking or conversion) to the same destination filename.
 
   This is useful for making profiles with the same files as the
   parent, but optimized for a different environment. E.g., recoded to
@@ -252,7 +253,9 @@ class ConvertProfile(Profile):
             it returns a relative destination filename of where the
             converted file should be placed.  Otherwise, it returns
             None, and the file is symlinked with the same relative
-            filename.
+            filename. This callback must ensure that no two source
+            files are mapped (via symlinking or conversion) to the
+            same destination filename.
         convert_cb: Callback to convert a file. Its arguments (in
             order) are the profile, the source filename, and the
             destination filename. This callback must be
@@ -278,14 +281,26 @@ class ConvertProfile(Profile):
         symlinked files, and all directories.
     """
 
-    dst_keep = set()
+    # Map from dst relpath to src relpath.
+    relpath_dst_to_src = {}
 
     with multiprocessing.Pool() as pool:
       results = []
 
       for src_relpath, dst_relpath, convert \
           in self.select_and_symlink():
-        dst_keep.add(dst_relpath)
+        if dst_relpath in relpath_dst_to_src:
+          self.log(
+            logging.ERROR,
+            'Found duplicate destination %r from sources %r and %r',
+            dst_relpath,
+            relpath_dst_to_src[dst_relpath],
+            src_relpath,
+            )
+          raise RuntimeError(
+            'Duplicate destination path %r' % dst_relpath)
+        else:
+          relpath_dst_to_src[dst_relpath] = src_relpath
 
         if not convert:
           continue
@@ -300,7 +315,7 @@ class ConvertProfile(Profile):
       for result in results:
         result.get()
 
-    return dst_keep
+    return frozenset(relpath_dst_to_src.keys())
 
   def convert_one(self, src_relpath, dst_relpath):
     """Convert a single file.
