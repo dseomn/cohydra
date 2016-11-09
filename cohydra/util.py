@@ -1,4 +1,5 @@
 import os
+import shutil
 
 
 def recursive_scandir(top_dir, dir_first=True):
@@ -35,3 +36,26 @@ def recursive_scandir(top_dir, dir_first=True):
       yield relpath, dir_entry
 
   return f('', None)
+
+
+def fix_dir_stats(profile):
+  """Fix directory stats for a profile.
+
+  This function assumes that every directory in the output corresponds
+  to a directory in the input with the same relative path. If that is
+  not true for the profile, do not use this function.
+
+  For each directory in profile.dst_path(), this will copy stats from
+  the corresponding directory in profile.src_path().
+  """
+
+  for dst_relpath, dst_entry in recursive_scandir(profile.dst_path()):
+    if not dst_entry.is_dir():
+      continue
+
+    src_relpath = dst_relpath
+
+    shutil.copystat(
+      profile.src_path(src_relpath),
+      profile.dst_path(dst_relpath),
+      )

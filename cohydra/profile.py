@@ -171,6 +171,8 @@ class FilterProfile(Profile):
 
     self.filter_dir('')
 
+    util.fix_dir_stats(self)
+
   def clean(self, relpath):
     """Clean the contents of the target directory.
 
@@ -272,6 +274,8 @@ class ConvertProfile(Profile):
     dst_keep = self.convert()
 
     self.clean(dst_keep)
+
+    util.fix_dir_stats(self)
 
   def convert(self):
     """Convert or symlink files.
