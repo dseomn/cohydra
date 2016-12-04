@@ -138,8 +138,8 @@ class RootProfile(Profile):
 class FilterProfile(Profile):
   """Profile in which every file is either symlinked or ignored.
 
-  No files are modified or renamed by this profile, only symlinked
-  from the parent, or ignored.
+  No files are modified by this profile, only symlinked from the
+  parent (possibly with a different filename), or ignored.
 
   This is useful for making profiles with a subset of the parent
   profile's files.
@@ -153,9 +153,14 @@ class FilterProfile(Profile):
             arguments are (profile, dir, contents). dir is a relative
             (source or destination) path. contents is a list of
             os.DirEntry objects. The callback must return a list of
-            files to keep, from contents. Directories in the keep-list
-            are recursed into; anything else is symlinked. Anything
-            not in the keep-list is ignored.
+            files to keep, from contents. Optionally, items in the
+            list may be tuples of the form (file from contents, new
+            relative destination path), in which case the file is kept
+            and renamed. (Currently, renaming is supported only for
+            files, not directories, and only within the same
+            directory, not accross directories.) Directories in the
+            keep-list are recursed into; anything else is symlinked.
+            Anything not in the keep-list is ignored.
     """
 
     super(FilterProfile, self).__init__(**kwargs)
@@ -218,16 +223,44 @@ class FilterProfile(Profile):
       )
 
     for src_entry in src_keep:
-      entry_relpath = os.path.join(relpath, src_entry.name)
-
-      if src_entry.is_dir():
-        self.filter_dir(entry_relpath)
+      if isinstance(src_entry, tuple):
+        # Keep and rename.
+        src_direntry, dst_entry_relpath = src_entry
+        src_entry_relpath = os.path.join(relpath, src_direntry.name)
       else:
+        # Keep, with same relpath.
+        src_direntry = src_entry
+        src_entry_relpath = os.path.join(relpath, src_direntry.name)
+        dst_entry_relpath = src_entry_relpath
+
+      if src_direntry.is_dir():
+        if src_entry_relpath != dst_entry_relpath:
+          raise NotImplemented(
+            'Renaming directories is not supported: %r -> %r' % (
+              src_entry_relpath,
+              dst_entry_relpath,
+              )
+            )
+        self.filter_dir(src_entry_relpath)
+      else:
+        if os.path.dirname(src_entry_relpath) != \
+            os.path.dirname(dst_entry_relpath):
+          raise NotImplemented(
+            'Renaming across dirs is not supported: %r -> %r' % (
+              src_entry_relpath,
+              dst_entry_relpath,
+              )
+            )
         os.makedirs(dst_path, exist_ok=True)
-        self.log(logging.DEBUG, 'Linking %r', entry_relpath)
+        self.log(
+          logging.DEBUG,
+          'Linking %r -> %r',
+          dst_entry_relpath,
+          src_entry_relpath,
+          )
         os.symlink(
-          os.path.relpath(os.path.abspath(src_entry.path), dst_path),
-          os.path.join(dst_path, src_entry.name),
+          os.path.relpath(self.src_path(src_entry_relpath), dst_path),
+          self.dst_path(dst_entry_relpath),
           )
 
 
