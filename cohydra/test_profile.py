@@ -62,7 +62,8 @@ class TestFilterProfile(
     p = profile.FilterProfile(
       top_dir=self.dst_path(),
       parent=root,
-      select_cb=lambda profile, dir, contents: contents,
+      select_cb=
+        lambda profile, src_relpath, dst_relpath, contents: contents,
       )
     p.generate()
 
@@ -75,7 +76,8 @@ class TestFilterProfile(
     p = profile.FilterProfile(
       top_dir=self.dst_path(),
       parent=root,
-      select_cb=lambda profile, dir, contents: contents,
+      select_cb=
+        lambda profile, src_relpath, dst_relpath, contents: contents,
       )
 
     self.assertRaisesRegex(
@@ -99,7 +101,7 @@ class TestFilterProfile(
 
     p.generate()
 
-    select_cb.assert_called_once_with(p, '', [])
+    select_cb.assert_called_once_with(p, '', '', [])
 
     self.assertEqual(os.listdir(self.dst_path()), [])
 
@@ -120,7 +122,7 @@ class TestFilterProfile(
 
     p.generate()
 
-    select_cb.assert_called_once_with(p, '', unittest.mock.ANY)
+    select_cb.assert_called_once_with(p, '', '', unittest.mock.ANY)
 
     self.assertEqual(os.listdir(self.dst_path()), [])
 
@@ -129,11 +131,14 @@ class TestFilterProfile(
     os.mkdir(os.path.join(self.src_path(), 'dir', 'dir'))
     open(os.path.join(self.src_path(), 'dir', 'dir', 'file'), 'w').close()
     open(os.path.join(self.src_path(), 'file'), 'w').close()
+    os.utime(os.path.join(self.src_path(), 'dir'), (0, 0))
+    os.utime(os.path.join(self.src_path(), 'dir', 'dir'), (0, 0))
 
     root = profile.RootProfile(top_dir=self.src_path())
 
     select_cb = unittest.mock.Mock(
-      wraps=lambda profile, dir, contents: contents)
+      wraps=
+        lambda profile, src_relpath, dst_relpath, contents: contents)
     p = profile.FilterProfile(
       top_dir=self.dst_path(),
       parent=root,
@@ -145,9 +150,9 @@ class TestFilterProfile(
     self.assertEqual(
       select_cb.mock_calls,
       [
-        unittest.mock.call(p, '', unittest.mock.ANY),
-        unittest.mock.call(p, 'dir', unittest.mock.ANY),
-        unittest.mock.call(p, 'dir/dir', unittest.mock.ANY),
+        unittest.mock.call(p, '', '', unittest.mock.ANY),
+        unittest.mock.call(p, 'dir', 'dir', unittest.mock.ANY),
+        unittest.mock.call(p, 'dir/dir', 'dir/dir', unittest.mock.ANY),
         ],
       )
 
@@ -194,8 +199,8 @@ class TestFilterProfile(
     root = profile.RootProfile(top_dir=self.src_path())
 
     select_cb = unittest.mock.Mock(
-      wraps=lambda profile, dir, contents:
-        contents if dir == '' else [],
+      wraps=lambda profile, src_relpath, dst_relpath, contents:
+        contents if src_relpath == '' else [],
       )
     p = profile.FilterProfile(
       top_dir=self.dst_path(),
@@ -208,54 +213,98 @@ class TestFilterProfile(
     self.assertEqual(
       select_cb.mock_calls,
       [
-        unittest.mock.call(p, '', unittest.mock.ANY),
-        unittest.mock.call(p, 'dir', unittest.mock.ANY),
+        unittest.mock.call(p, '', '', unittest.mock.ANY),
+        unittest.mock.call(p, 'dir', 'dir', unittest.mock.ANY),
         ],
       )
 
     self.assertEqual(os.listdir(self.dst_path()), [])
 
   def test_rename(self):
+    os.mkdir(os.path.join(self.src_path(), 'dir'))
+    os.mkdir(os.path.join(self.src_path(), 'dir', 'dir'))
+    open(os.path.join(self.src_path(), 'dir', 'dir', 'file'), 'w').close()
+    open(os.path.join(self.src_path(), 'dir', 'file'), 'w').close()
     open(os.path.join(self.src_path(), 'file'), 'w').close()
+    os.utime(os.path.join(self.src_path(), 'dir'), (0, 0))
+    os.utime(os.path.join(self.src_path(), 'dir', 'dir'), (0, 0))
 
     root = profile.RootProfile(top_dir=self.src_path())
 
+    def select_cb(profile, src_relpath, dst_relpath, contents):
+      ret = []
+      for entry in contents:
+        if src_relpath == '' and entry.name == 'dir':
+          ret.append((entry, 'dir.new'))
+        elif src_relpath == '' and entry.name == 'file':
+          ret.append((entry, 'file.new'))
+        elif src_relpath == 'dir' and entry.name == 'dir':
+          ret.append(entry)
+        elif src_relpath == 'dir' and entry.name == 'file':
+          ret.append((entry, os.path.join('dir.new', 'file.new')))
+        elif src_relpath == 'dir/dir' and entry.name == 'file':
+          ret.append(entry)
+        else:
+          raise RuntimeError('Unexpected entry.')
+      return ret
+    select_cb = unittest.mock.Mock(wraps=select_cb)
     p = profile.FilterProfile(
       top_dir=self.dst_path(),
       parent=root,
-      select_cb=
-        lambda profile, dir, contents:
-          [(x, 'renamed') for x in contents],
+      select_cb=select_cb,
       )
 
     p.generate()
 
-    self.assertEqual(os.listdir(self.dst_path()), ['renamed'])
+    self.assertEqual(
+      select_cb.mock_calls,
+      [
+        unittest.mock.call(p, '', '', unittest.mock.ANY),
+        unittest.mock.call(p, 'dir', 'dir.new', unittest.mock.ANY),
+        unittest.mock.call(p, 'dir/dir', 'dir.new/dir', unittest.mock.ANY),
+        ],
+      )
 
     self.assertEqual(
-      test_helper.symlink_pointee_abspath(
-        os.path.join(self.dst_path(), 'renamed')),
+      frozenset(os.listdir(self.dst_path())),
+      {'dir.new', 'file.new'})
+    self.assertEqual(
+      frozenset(os.listdir(os.path.join(self.dst_path(), 'dir.new'))),
+      {'dir', 'file.new'})
+    self.assertEqual(
+      frozenset(os.listdir(os.path.join(self.dst_path(), 'dir.new', 'dir'))),
+      {'file'})
+
+    self.assertEqual(
+      test_helper.get_preserved_attrs(
+        os.path.join(self.src_path(), 'dir')),
+      test_helper.get_preserved_attrs(
+        os.path.join(self.dst_path(), 'dir.new')),
+      )
+    self.assertEqual(
+      test_helper.get_preserved_attrs(
+        os.path.join(self.src_path(), 'dir', 'dir')),
+      test_helper.get_preserved_attrs(
+        os.path.join(self.dst_path(), 'dir.new', 'dir')),
+      )
+
+    self.assertEqual(
       os.path.abspath(
         os.path.join(self.src_path(), 'file')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), 'file.new')),
       )
-
-  def test_rename_dir_error(self):
-    os.mkdir(os.path.join(self.src_path(), 'dir'))
-
-    root = profile.RootProfile(top_dir=self.src_path())
-
-    p = profile.FilterProfile(
-      top_dir=self.dst_path(),
-      parent=root,
-      select_cb=
-        lambda profile, dir, contents:
-          [(x, 'renamed') for x in contents],
+    self.assertEqual(
+      os.path.abspath(
+        os.path.join(self.src_path(), 'dir', 'file')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), 'dir.new', 'file.new')),
       )
-
-    self.assertRaisesRegex(
-      NotImplementedError,
-      '^Renaming directories is not supported: ',
-      p.generate,
+    self.assertEqual(
+      os.path.abspath(
+        os.path.join(self.src_path(), 'dir', 'dir', 'file')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), 'dir.new', 'dir', 'file')),
       )
 
   def test_rename_across_dir_error(self):
@@ -264,7 +313,7 @@ class TestFilterProfile(
 
     root = profile.RootProfile(top_dir=self.src_path())
 
-    def select_cb(profile, dir, contents):
+    def select_cb(profile, src_relpath, dst_relpath, contents):
       ret = []
       for entry in contents:
         if entry.name.endswith('file'):

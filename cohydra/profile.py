@@ -150,17 +150,19 @@ class FilterProfile(Profile):
     Args:
         select_cb: Callback to select which files/directories in a
             directory get symlinked and which are ignored. Its
-            arguments are (profile, dir, contents). dir is a relative
-            (source or destination) path. contents is a list of
-            os.DirEntry objects. The callback must return a list of
-            files to keep, from contents. Optionally, items in the
-            list may be tuples of the form (file from contents, new
-            relative destination path), in which case the file is kept
-            and renamed. (Currently, renaming is supported only for
-            files, not directories, and only within the same
-            directory, not accross directories.) Directories in the
-            keep-list are recursed into; anything else is symlinked.
-            Anything not in the keep-list is ignored.
+            arguments are (profile, src_relpath, dst_relpath,
+            contents). src_relpath and dst_relpath are relative paths
+            to the original directory name, and the possibly renamed
+            directory name. contents is a list of os.DirEntry objects.
+            The callback must return a list of files to keep, from
+            contents. Optionally, items in the list may be tuples of
+            the form (file from contents, new relative destination
+            path), in which case the file is kept and renamed.
+            (Currently, renaming is supported only within the same,
+            possibly renamed, directory. I.e., the renamed filename
+            must be within dst_relpath.) Directories in the keep-list
+            are recursed into; anything else is symlinked. Anything
+            not in the keep-list is ignored.
     """
 
     super(FilterProfile, self).__init__(**kwargs)
@@ -174,9 +176,7 @@ class FilterProfile(Profile):
     # determining what's up to date.
     self.clean('')
 
-    self.filter_dir('')
-
-    util.fix_dir_stats(self)
+    self.filter_dir('', '')
 
   def clean(self, relpath):
     """Clean the contents of the target directory.
@@ -205,7 +205,7 @@ class FilterProfile(Profile):
           )
         raise RuntimeError('Cannot clean %r' % relpath)
 
-  def filter_dir(self, relpath):
+  def filter_dir(self, src_relpath, dst_relpath):
     """Filter a single directory, recursively.
 
     If any files are included in the filter, this will create the
@@ -213,12 +213,13 @@ class FilterProfile(Profile):
     do nothing.
     """
 
-    src_path = self.src_path(relpath)
-    dst_path = self.dst_path(relpath)
+    src_path = self.src_path(src_relpath)
+    dst_path = self.dst_path(dst_relpath)
 
     src_keep = self.select_cb(
       self,
-      relpath,
+      src_relpath,
+      dst_relpath,
       list(os.scandir(src_path)),
       )
 
@@ -226,31 +227,27 @@ class FilterProfile(Profile):
       if isinstance(src_entry, tuple):
         # Keep and rename.
         src_direntry, dst_entry_relpath = src_entry
-        src_entry_relpath = os.path.join(relpath, src_direntry.name)
+        src_entry_relpath = os.path.join(src_relpath, src_direntry.name)
       else:
-        # Keep, with same relpath.
+        # Keep, with same name in the same directory.
         src_direntry = src_entry
-        src_entry_relpath = os.path.join(relpath, src_direntry.name)
-        dst_entry_relpath = src_entry_relpath
+        src_entry_relpath = os.path.join(src_relpath, src_direntry.name)
+        dst_entry_relpath = os.path.join(dst_relpath, src_direntry.name)
+
+      if os.path.dirname(dst_entry_relpath) != dst_relpath:
+        raise NotImplementedError(
+          'Renaming across dirs is not supported: '
+          '%r -> %r in directory %r -> %r' % (
+            src_entry_relpath,
+            dst_entry_relpath,
+            src_relpath,
+            dst_relpath,
+            )
+          )
 
       if src_direntry.is_dir():
-        if src_entry_relpath != dst_entry_relpath:
-          raise NotImplementedError(
-            'Renaming directories is not supported: %r -> %r' % (
-              src_entry_relpath,
-              dst_entry_relpath,
-              )
-            )
-        self.filter_dir(src_entry_relpath)
+        self.filter_dir(src_entry_relpath, dst_entry_relpath)
       else:
-        if os.path.dirname(src_entry_relpath) != \
-            os.path.dirname(dst_entry_relpath):
-          raise NotImplementedError(
-            'Renaming across dirs is not supported: %r -> %r' % (
-              src_entry_relpath,
-              dst_entry_relpath,
-              )
-            )
         os.makedirs(dst_path, exist_ok=True)
         self.log(
           logging.DEBUG,
@@ -262,6 +259,9 @@ class FilterProfile(Profile):
           os.path.relpath(self.src_path(src_entry_relpath), dst_path),
           self.dst_path(dst_entry_relpath),
           )
+
+    if dst_relpath and os.path.isdir(dst_path):
+      shutil.copystat(src_path, dst_path)
 
 
 class ConvertProfile(Profile):
