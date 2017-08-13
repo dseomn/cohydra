@@ -332,3 +332,84 @@ class TestFilterProfile(
       '^Renaming across dirs is not supported: ',
       p.generate,
       )
+
+
+class TestSanitizeFilenameProfile(
+    unittest.TestCase,
+    test_helper.SrcDstDirMixin,
+    ):
+  def setUp(self):
+    test_helper.SrcDstDirMixin.setUp(self)
+
+    root = profile.RootProfile(top_dir=self.src_path())
+    self.profile = profile.SanitizeFilenameProfile(
+      top_dir=self.dst_path(),
+      parent=root,
+      )
+
+  def tearDown(self):
+    test_helper.SrcDstDirMixin.tearDown(self)
+
+  def test_sanitization(self):
+    open(os.path.join(self.src_path(), ':'), 'w').close()
+    open(os.path.join(self.src_path(), 'CON'), 'w').close()
+    open(os.path.join(self.src_path(), 'lpt2.txt'), 'w').close()
+    open(os.path.join(self.src_path(), 'foo.'), 'w').close()
+    open(os.path.join(self.src_path(), 'ok'), 'w').close()
+
+    self.profile.generate()
+
+    self.assertEqual(
+      frozenset(os.listdir(self.dst_path())),
+      {'_', 'CON_', 'lpt2_.txt', 'foo_', 'ok'})
+
+    self.assertEqual(
+      os.path.abspath(
+        os.path.join(self.src_path(), ':')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), '_')),
+      )
+    self.assertEqual(
+      os.path.abspath(
+        os.path.join(self.src_path(), 'CON')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), 'CON_')),
+      )
+    self.assertEqual(
+      os.path.abspath(
+        os.path.join(self.src_path(), 'lpt2.txt')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), 'lpt2_.txt')),
+      )
+    self.assertEqual(
+      os.path.abspath(
+        os.path.join(self.src_path(), 'foo.')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), 'foo_')),
+      )
+    self.assertEqual(
+      os.path.abspath(
+        os.path.join(self.src_path(), 'ok')),
+      test_helper.symlink_pointee_abspath(
+        os.path.join(self.dst_path(), 'ok')),
+      )
+
+  def test_duplicate_filename_error(self):
+    open(os.path.join(self.src_path(), ':'), 'w').close()
+    open(os.path.join(self.src_path(), '?'), 'w').close()
+
+    self.assertRaisesRegex(
+      RuntimeError,
+      '^Sanitizing would create duplicate file: ',
+      self.profile.generate,
+      )
+
+  def test_duplicate_filename_case_error(self):
+    open(os.path.join(self.src_path(), 'A'), 'w').close()
+    open(os.path.join(self.src_path(), 'a'), 'w').close()
+
+    self.assertRaisesRegex(
+      RuntimeError,
+      '^Sanitizing would create duplicate file: ',
+      self.profile.generate,
+      )

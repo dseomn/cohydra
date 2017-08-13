@@ -483,3 +483,133 @@ class ConvertProfile(Profile):
           os.rmdir(dst_entry.path)
         else:
           os.remove(dst_entry.path)
+
+
+class SanitizeFilenameProfile(FilterProfile):
+  """Profile to sanitize filenames.
+
+  This is currently based on
+  https://msdn.microsoft.com/en-us/library/aa365247.aspx.
+  """
+
+  # Map from forbidden characters to replacements.
+  _forbidden_chars_map = {
+    0x00: '',
+    0x01: '',
+    0x02: '',
+    0x03: '',
+    0x04: '',
+    0x05: '',
+    0x06: '',
+    0x07: '',
+    0x08: '',
+    0x09: '',
+    0x0A: '',
+    0x0B: '',
+    0x0C: '',
+    0x0D: '',
+    0x0E: '',
+    0x0F: '',
+    0x10: '',
+    0x11: '',
+    0x12: '',
+    0x13: '',
+    0x14: '',
+    0x15: '',
+    0x16: '',
+    0x17: '',
+    0x18: '',
+    0x19: '',
+    0x1A: '',
+    0x1B: '',
+    0x1C: '',
+    0x1D: '',
+    0x1E: '',
+    0x1F: '',
+    ord('"'): '_',
+    ord('*'): '_',
+    ord('/'): '_',
+    ord(':'): '_',
+    ord('<'): '_',
+    ord('>'): '_',
+    ord('?'): '_',
+    ord('\\'): '_',
+    ord('|'): '_',
+    }
+
+  # Names that Windows has reserved.
+  _reserved_names = {s.casefold() for s in [
+    'CON',
+    'PRN',
+    'AUX',
+    'NUL',
+    'COM1',
+    'COM2',
+    'COM3',
+    'COM4',
+    'COM5',
+    'COM6',
+    'COM7',
+    'COM8',
+    'COM9',
+    'LPT1',
+    'LPT2',
+    'LPT3',
+    'LPT4',
+    'LPT5',
+    'LPT6',
+    'LPT7',
+    'LPT8',
+    'LPT9',
+    ]}
+
+  def __init__(self, **kwargs):
+    super(SanitizeFilenameProfile, self).__init__(
+      select_cb=self._sanitize_cb,
+      **kwargs,
+      )
+
+  def _sanitize_cb(self, profile, src_relpath, dst_relpath, contents):
+    """select_cb for parent FilterProfile.
+    """
+
+    keep = []
+    casefolded_names = set()
+    for entry in contents:
+      sanitized_name = self._sanitize_name(entry.name)
+      sanitized_relpath = os.path.join(dst_relpath, sanitized_name)
+
+      # Casefold when looking for duplicates, because some filesystems
+      # are case-insensitive.
+      casefolded_name = sanitized_name.casefold()
+      if casefolded_name in casefolded_names:
+        raise RuntimeError(
+          'Sanitizing would create duplicate file: %r' % (
+            sanitized_relpath,
+            )
+          )
+      casefolded_names.add(casefolded_name)
+
+      keep.append((entry, sanitized_relpath))
+
+    return keep
+
+  def _sanitize_name(self, filename):
+    """Sanitize a single path component.
+    """
+
+    sanitized = filename.translate(
+      SanitizeFilenameProfile._forbidden_chars_map)
+
+    if sanitized in ('.', '..'):
+      sanitized = sanitized + '_'
+
+    basename, dot, extension = sanitized.partition('.')
+    if basename.casefold() in SanitizeFilenameProfile._reserved_names:
+      basename = basename + '_'
+    sanitized = ''.join([basename, dot, extension])
+
+    if sanitized and sanitized[-1] in '. ':
+      sanitized = sanitized[:-1] + '_'
+
+    return sanitized
