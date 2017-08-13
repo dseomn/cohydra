@@ -235,7 +235,7 @@ class FilterProfile(Profile):
 
       if src_direntry.is_dir():
         if src_entry_relpath != dst_entry_relpath:
-          raise NotImplemented(
+          raise NotImplementedError(
             'Renaming directories is not supported: %r -> %r' % (
               src_entry_relpath,
               dst_entry_relpath,
@@ -245,7 +245,7 @@ class FilterProfile(Profile):
       else:
         if os.path.dirname(src_entry_relpath) != \
             os.path.dirname(dst_entry_relpath):
-          raise NotImplemented(
+          raise NotImplementedError(
             'Renaming across dirs is not supported: %r -> %r' % (
               src_entry_relpath,
               dst_entry_relpath,

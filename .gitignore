@@ -1,2 +1,7 @@
+/*.egg-info/
+/.coverage
+/build/
+/coverage.xml
+
 *.pyc
 *.pyo
