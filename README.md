@@ -106,7 +106,7 @@ music_master = cohydra.profile.RootProfile(
   )
 
 
-def music_default_select_cb(profile, dir, contents):
+def music_default_select_cb(profile, src_relpath, dst_relpath, contents):
   """Select which files go into the default profile.
 
   The default profile has all of the audio files, plus a single image
@@ -266,7 +266,7 @@ music_large = cohydra.profile.ConvertProfile(
 # music_large saves.
 
 
-def music_videos_select_cb(profile, dir, contents):
+def music_videos_select_cb(profile, src_relpath, dst_relpath, contents):
   """Select which files to keep in the video profile.
 
   The video profile has only videos, and ISO images (which may contain
